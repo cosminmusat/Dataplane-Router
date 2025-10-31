@@ -168,14 +168,14 @@ int main(int argc, char *argv[])
 			uint16_t opcode = ntohs(ah->opcode);
 			
 			if (opcode == ARP_REQUEST_OPCODE) {
-				in_addr_t int_ip = ntohl(inet_addr(get_interface_ip(interface)));
-				uint32_t dest_addr = ntohl(ah->tprotoa);
+				in_addr_t int_ip = inet_addr(get_interface_ip(interface));
+				uint32_t dest_addr = ah->tprotoa;
 				if (int_ip != dest_addr) {
 					fprintf(stderr, "Packet dropped, arp request not meant for this address!\n");
 					continue;
 				}
 				ah->tprotoa = ah->sprotoa;
-				ah->sprotoa = htonl(dest_addr);
+				ah->sprotoa = dest_addr;
 
 				for (int i = 0; i < 6; ++i) {
 					ah->thwa[i] = ah->shwa[i];
@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
 			}
 			else if (opcode == ARP_REPLY_OPCODE) {
 				uint8_t arp_entry_mac[6];
-				uint32_t arp_entry_ip = ntohl(ah->sprotoa);
+				uint32_t arp_entry_ip = ah->sprotoa;
 
 				for (int i = 0; i < 6; ++i) {
 					arp_entry_mac[i] = ah->shwa[i];
@@ -219,9 +219,8 @@ int main(int argc, char *argv[])
 					struct ether_hdr *eh = (struct ether_hdr*)packet;
 
 					struct ip_hdr *ih = (struct ip_hdr*)(packet + sizeof(struct ether_hdr));
-					uint32_t dest_addr = ntohl(ih->dest_addr);
 
-					struct route_table_entry* rt_entry = search_rtable(rt, dest_addr, rt_no_entries);
+					struct route_table_entry* rt_entry = search_rtable(rt, ih->dest_addr, rt_no_entries);
 					struct arp_table_entry *at_entry = search_arp_table(at, rt_entry->next_hop, at_no_entries);
 					
 					if (at_entry == NULL) {
