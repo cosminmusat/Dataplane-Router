@@ -40,9 +40,9 @@ void *queue_deq(queue q)
 	{
 		void *temp = q->head->element;
 		q->head = cdr_and_free(q->head);
+		--q->no_elem;
 		return temp;
 	}
-	--q->no_elem;
 }
 
 unsigned int queue_size(queue q) {

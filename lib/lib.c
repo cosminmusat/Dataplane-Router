@@ -243,9 +243,9 @@ struct route_table_entry* search_rtable(struct route_table_entry* rt, uint32_t i
 	struct route_table_entry* rt_entry = NULL;
 	uint32_t mask = 0;
 	for (unsigned int i = 0; i < size; ++i) {
-		if ((ip & rt[i].mask) == rt[i].prefix && rt[i].mask > mask) {
+		if ((ip & rt[i].mask) == rt[i].prefix && ntohl(rt[i].mask) > mask) {
 			rt_entry = &rt[i];
-			mask = rt[i].mask;
+			mask = ntohl(rt[i].mask);
 		}
 	}
 	return rt_entry;

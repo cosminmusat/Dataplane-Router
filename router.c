@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <string.h>
+#include <inttypes.h>
 #include "protocols.h"
 #include "queue.h"
 #include "lib.h"
@@ -18,6 +19,9 @@ int main(int argc, char *argv[])
 	// Do not modify this line
 	init(argv + 2, argc - 2);
 
+	// both rt and arp table are in network byte order
+	// do not network order rentry->interface!
+
 	unsigned int rt_no_entries = count_lines(argv[1]);
 	struct route_table_entry *rt = malloc(rt_no_entries * sizeof(struct route_table_entry));
 	read_rtable(argv[1], rt);
@@ -29,6 +33,10 @@ int main(int argc, char *argv[])
 
 	queue awaiting_arp_reply_pckts = create_queue();
 	queue awaiting_arp_reply_pckt_szs = create_queue();
+
+	// fprintf(stderr, "prefix: 0x%" PRIx32 ", next_hop: 0x%" PRIx32 ", mask: 0x%" PRIx32 "\n", rt[9136].prefix, rt[9136].next_hop, rt[9136].mask);
+	// fprintf(stderr, "prefix: 0x%" PRIx32 ", next_hop: 0x%" PRIx32 ", mask: 0x%" PRIx32 "\n", rt[51469].prefix, rt[51469].next_hop, rt[51469].mask);
+	// fprintf(stderr, "ip: 0x%" PRIx32 "\n", at[0].ip);
 
 	while (1) {
 
@@ -49,25 +57,24 @@ int main(int argc, char *argv[])
 		for (int i = 0; i < 6; ++i) {
 			if (eh->ethr_dhost[i] != 0xFF) {
 				broadcast = 0;
-				break;
 			}
 			if (eh->ethr_dhost[i] != int_mac[i]) {
 				is_router_dest = 0;
-				break;
 			}
 		}
 
 		if (!(broadcast || is_router_dest)) {
+			fprintf(stderr, "Packet dropped, not broadcast nor is router destination\n");
 			continue;
 		}
 
 		if (ether_type == ETHERTYPE_IP) {
 			struct ip_hdr *ih = (struct ip_hdr*)(buf + sizeof(struct ether_hdr));
-			uint32_t dest_addr = ntohl(ih->dest_addr);
-			uint32_t int_ip = ntohl(inet_addr(get_interface_ip(interface)));
+			uint32_t int_ip = inet_addr(get_interface_ip(interface));
 
-			if (dest_addr == int_ip) {
+			if (ih->dest_addr == int_ip) {
 				// router is the destination
+				fprintf(stderr, "Packet dropped momentarely, router is dest\n");
 				continue;
 			}
 
@@ -83,13 +90,14 @@ int main(int argc, char *argv[])
 
 			if (ih->ttl <= 1) {
 				// send icmp packet "Time exceeded"
-
+				fprintf(stderr, "Packet dropped, ttl expired!\n");
 				continue;
 			}
 
 			--ih->ttl;
 
-			struct route_table_entry* rt_entry = search_rtable(rt, dest_addr, rt_no_entries);
+
+			struct route_table_entry* rt_entry = search_rtable(rt, ih->dest_addr, rt_no_entries);
 
 			if (rt_entry == NULL) {
 				// send icmp packet "Destination unreachable"
@@ -106,12 +114,14 @@ int main(int argc, char *argv[])
 			if (at_entry == NULL) {
 				char *packet = malloc(MAX_PACKET_LEN);
 				memcpy(packet, buf, len);
+				size_t* len_ptr = malloc(sizeof(size_t));
+				*len_ptr = len;
 				queue_enq(awaiting_arp_reply_pckts, packet);
-				queue_enq(awaiting_arp_reply_pckt_szs, &len);
+				queue_enq(awaiting_arp_reply_pckt_szs, len_ptr);
 
 				// send query arp packet
-				size_t len = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
-				char *arp_request = malloc(len);
+				size_t arp_req_len = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
+				char *arp_request = malloc(arp_req_len);
 				struct ether_hdr *eh = (struct ether_hdr*)arp_request;
 				eh->ethr_type = htons(ETHERTYPE_ARP);
 
@@ -126,17 +136,18 @@ int main(int argc, char *argv[])
 				struct arp_hdr *ah = (struct arp_hdr*)(arp_request + sizeof(struct ether_hdr));
 				ah->hw_len = 6;
 				ah->proto_len = 4;
-				ah->opcode = ARP_REQUEST_OPCODE;
+				ah->opcode = htons(ARP_REQUEST_OPCODE);
 				ah->proto_type = htons(ETHERTYPE_IP);
-				ah->hw_type = 1;
-				ah->tprotoa = htonl(rt_entry->next_hop);
+				ah->hw_type = htons(1);
+				ah->tprotoa = rt_entry->next_hop; // its in network byte order
 				ah->sprotoa = inet_addr(get_interface_ip(rt_entry->interface));
 
 				for (int i = 0; i < 6; ++i) {
 					ah->shwa[i] = interface_mac_to_next_hop[i];
 					ah->thwa[i] = 0xFF;
 				}
-				send_to_link(len, arp_request, rt_entry->interface);
+				send_to_link(arp_req_len, arp_request, rt_entry->interface);
+				free(arp_request);
 				continue;
 			}
 
@@ -154,11 +165,13 @@ int main(int argc, char *argv[])
 		}
 		else if (ether_type == ETHERTYPE_ARP) {
 			struct arp_hdr *ah = (struct arp_hdr*)(buf + sizeof(struct ether_hdr));
+			uint16_t opcode = ntohs(ah->opcode);
 			
-			if (ah->opcode == ARP_REQUEST_OPCODE) {
+			if (opcode == ARP_REQUEST_OPCODE) {
 				in_addr_t int_ip = ntohl(inet_addr(get_interface_ip(interface)));
 				uint32_t dest_addr = ntohl(ah->tprotoa);
 				if (int_ip != dest_addr) {
+					fprintf(stderr, "Packet dropped, arp request not meant for this address!\n");
 					continue;
 				}
 				ah->tprotoa = ah->sprotoa;
@@ -168,7 +181,7 @@ int main(int argc, char *argv[])
 					ah->thwa[i] = ah->shwa[i];
 					ah->shwa[i] = int_mac[i];
 				}
-				ah->opcode = ARP_REPLY_OPCODE;
+				ah->opcode = htons(ARP_REPLY_OPCODE);
 
 				for (int i = 0; i < 6; ++i) {
 					eh->ethr_dhost[i] = eh->ethr_shost[i];
@@ -177,7 +190,7 @@ int main(int argc, char *argv[])
 
 				send_to_link(len, buf, interface);
 			}
-			else if (ah->opcode == ARP_REPLY_OPCODE) {
+			else if (opcode == ARP_REPLY_OPCODE) {
 				uint8_t arp_entry_mac[6];
 				uint32_t arp_entry_ip = ntohl(ah->sprotoa);
 
@@ -200,8 +213,11 @@ int main(int argc, char *argv[])
 				unsigned int waiting_size = queue_size(awaiting_arp_reply_pckts);
 
 				while (waiting_size > 0) {
-					char *packet = queue_deq(awaiting_arp_reply_pckts);
-					size_t len = *(size_t*)queue_deq(awaiting_arp_reply_pckt_szs);
+					char *packet = (char*)queue_deq(awaiting_arp_reply_pckts);
+					size_t* len_ptr = (size_t*)queue_deq(awaiting_arp_reply_pckt_szs);
+
+					struct ether_hdr *eh = (struct ether_hdr*)packet;
+
 					struct ip_hdr *ih = (struct ip_hdr*)(packet + sizeof(struct ether_hdr));
 					uint32_t dest_addr = ntohl(ih->dest_addr);
 
@@ -210,7 +226,7 @@ int main(int argc, char *argv[])
 					
 					if (at_entry == NULL) {
 						queue_enq(awaiting_arp_reply_pckts, packet);
-						queue_enq(awaiting_arp_reply_pckt_szs, &len);
+						queue_enq(awaiting_arp_reply_pckt_szs, len_ptr);
 					}
 					else {
 						uint8_t *mac_next_hop = at_entry->mac;
@@ -222,7 +238,9 @@ int main(int argc, char *argv[])
 							eh->ethr_dhost[i] = mac_next_hop[i];
 						}
 
-						send_to_link(len, packet, rt_entry->interface);
+						send_to_link(*len_ptr, packet, rt_entry->interface);
+						free(packet);
+						free(len_ptr);
 					}
 
 					--waiting_size;
