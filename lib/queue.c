@@ -7,12 +7,14 @@ struct queue
 {
 	list head;
 	list tail;
+	unsigned int no_elem;
 };
 
 queue create_queue(void)
 {
 	queue q = malloc(sizeof(struct queue));
 	q->head = q->tail = NULL;
+	q->no_elem = 0;
 	return q;
 }
 
@@ -29,6 +31,7 @@ void queue_enq(queue q, void *element)
 		q->tail->next = constr(element, NULL);
 		q->tail = q->tail->next;
 	}
+	++q->no_elem;
 }
 
 void *queue_deq(queue q)
@@ -39,4 +42,9 @@ void *queue_deq(queue q)
 		q->head = cdr_and_free(q->head);
 		return temp;
 	}
+	--q->no_elem;
+}
+
+unsigned int queue_size(queue q) {
+	return q->no_elem;
 }

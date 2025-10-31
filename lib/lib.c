@@ -226,6 +226,44 @@ int read_rtable(const char *path, struct route_table_entry *rtable)
 	return j;
 }
 
+unsigned int count_lines(const char *path)
+{
+    FILE *fp = fopen(path, "r");
+    char line[256];
+    unsigned int count = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        count++;
+    }
+    fclose(fp);
+    return count;
+}
+
+struct route_table_entry* search_rtable(struct route_table_entry* rt, uint32_t ip, unsigned int size)
+{
+	struct route_table_entry* rt_entry = NULL;
+	uint32_t mask = 0;
+	for (unsigned int i = 0; i < size; ++i) {
+		if ((ip & rt[i].mask) == rt[i].prefix && rt[i].mask > mask) {
+			rt_entry = &rt[i];
+			mask = rt[i].mask;
+		}
+	}
+	return rt_entry;
+}
+
+struct arp_table_entry* search_arp_table(struct arp_table_entry* at, uint32_t ip, unsigned int size)
+{
+	struct arp_table_entry* at_entry = NULL;
+	
+	for (unsigned int i = 0; i < size; ++i) {
+		if (ip == at[i].ip) {
+			at_entry = &at[i];
+		}
+	}
+
+	return at_entry;
+}
+
 int parse_arp_table(char *path, struct arp_table_entry *arp_table)
 {
 	FILE *f;

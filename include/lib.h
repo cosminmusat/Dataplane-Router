@@ -90,6 +90,12 @@ int hwaddr_aton(const char *txt, uint8_t *addr);
  */
 int read_rtable(const char *path, struct route_table_entry *rtable);
 
+unsigned int count_lines(const char *path);
+
+struct route_table_entry* search_rtable(struct route_table_entry* rt, uint32_t ip, unsigned int size);
+
+struct arp_table_entry* search_arp_table(struct arp_table_entry* at, uint32_t ip, unsigned int size);
+
 /* Parses a static mac table from path and populates arp_table.
  * arp_table should be allocated and have enough space. This
  * function returns the size of the arp table.
