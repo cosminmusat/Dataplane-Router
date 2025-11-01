@@ -29,10 +29,10 @@ int main(int argc, char *argv[])
 	struct route_table_entry *rt = malloc(rt_no_entries * sizeof(struct route_table_entry));
 	read_rtable(argv[1], rt);
 
-	unsigned int at_no_entries = count_lines("arp_table.txt");
-	unsigned int at_capacity = at_no_entries;
+	unsigned int at_no_entries = 0;
+	unsigned int at_capacity = 1;
 	struct arp_table_entry *at = malloc(at_capacity * sizeof(struct arp_table_entry));
-	parse_arp_table("arp_table.txt", at);
+	// parse_arp_table("arp_table.txt", at);
 
 	queue awaiting_arp_reply_pckts = create_queue();
 	queue awaiting_arp_reply_pckt_szs = create_queue();
