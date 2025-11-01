@@ -11,6 +11,9 @@
 #define ETHERTYPE_ARP 0x0806
 #define ARP_REQUEST_OPCODE 1
 #define ARP_REPLY_OPCODE 2
+#define ICMP_TYPE_DEST_UNRC 3
+#define ICMP_TYPE_TIME_EXCD 1
+#define IP_PROTO_ICMP 1
 
 int main(int argc, char *argv[])
 {
@@ -74,7 +77,50 @@ int main(int argc, char *argv[])
 
 			if (ih->dest_addr == int_ip) {
 				// router is the destination
-				fprintf(stderr, "Packet dropped momentarely, router is dest\n");
+				size_t echo_reply_len = sizeof(struct ether_hdr) + sizeof (struct ip_hdr) + sizeof(struct icmp_hdr);
+				size_t data_len = (len - echo_reply_len);
+				echo_reply_len += data_len;
+				char *echo_reply = malloc(echo_reply_len);
+
+				struct ether_hdr *echo_reply_eh = (struct ether_hdr*)echo_reply;
+				for (int i = 0; i < 6; ++i) {
+					echo_reply_eh->ethr_dhost[i] = eh->ethr_shost[i];
+					echo_reply_eh->ethr_shost[i] = eh->ethr_dhost[i];
+				}
+				echo_reply_eh->ethr_type = htons(ETHERTYPE_IP);
+
+				struct ip_hdr *echo_reply_ih = (struct ip_hdr*)(echo_reply + sizeof(struct ether_hdr));
+				echo_reply_ih->dest_addr = ih->source_addr;
+				echo_reply_ih->source_addr = ih->dest_addr;
+				echo_reply_ih->proto = IP_PROTO_ICMP;
+				echo_reply_ih->tos = 0;
+				echo_reply_ih->frag = 0;
+				echo_reply_ih->ver = 4;
+				echo_reply_ih->ihl = 5;
+				echo_reply_ih->id = htons(4);
+				echo_reply_ih->ttl = 64;
+				uint16_t tot_len = sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + data_len;
+				echo_reply_ih->tot_len = htons(tot_len);
+				echo_reply_ih->checksum = 0;
+				uint16_t checksum_ip = checksum((uint16_t*)echo_reply_ih, sizeof(struct ip_hdr));
+				echo_reply_ih->checksum = htons(checksum_ip);
+
+				struct icmp_hdr *echo_reply_icmph = (struct icmp_hdr*)(echo_reply + sizeof(struct ether_hdr) + sizeof(struct ip_hdr));
+				echo_reply_icmph->mtype = 0;
+				echo_reply_icmph->mcode = 0;
+
+				struct icmp_hdr *echo_request_icmph = (struct icmp_hdr*)(buf + sizeof(struct ether_hdr) + sizeof(struct ip_hdr));
+
+				echo_reply_icmph->un_t.echo_t.id = echo_request_icmph->un_t.echo_t.id;
+				echo_reply_icmph->un_t.echo_t.seq = echo_request_icmph->un_t.echo_t.seq;
+				echo_reply_icmph->check = 0;
+				uint16_t checksum_icmp = checksum((uint16_t*)echo_reply_icmph, sizeof(struct icmp_hdr));
+				echo_reply_icmph->check = htons(checksum_icmp);
+
+				memcpy(echo_reply + sizeof(struct ether_hdr) + sizeof(struct ip_hdr) + sizeof(struct icmp_hdr), buf + sizeof(struct ether_hdr) + sizeof(struct ip_hdr) + sizeof(struct icmp_hdr), data_len);
+
+				send_to_link(echo_reply_len, echo_reply, interface);
+				free(echo_reply);
 				continue;
 			}
 
@@ -90,7 +136,43 @@ int main(int argc, char *argv[])
 
 			if (ih->ttl <= 1) {
 				// send icmp packet "Time exceeded"
-				fprintf(stderr, "Packet dropped, ttl expired!\n");
+				size_t dest_unrc_icmp_len = sizeof(struct ether_hdr) + 2 * sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + 8;
+				char *dest_unrc_icmp = malloc(dest_unrc_icmp_len);
+
+				struct ether_hdr *icmp_eh = (struct ether_hdr*)dest_unrc_icmp;
+				for (int i = 0; i < 6; ++i) {
+					icmp_eh->ethr_dhost[i] = eh->ethr_shost[i];
+					icmp_eh->ethr_shost[i] = eh->ethr_dhost[i];
+				}
+				icmp_eh->ethr_type = htons(ETHERTYPE_IP);
+
+				struct ip_hdr *icmp_ih = (struct ip_hdr*)(dest_unrc_icmp + sizeof(struct ether_hdr));
+				icmp_ih->dest_addr = ih->source_addr;
+				icmp_ih->source_addr = int_ip;
+				icmp_ih->proto = IP_PROTO_ICMP;
+				icmp_ih->tos = 0;
+				icmp_ih->frag = 0;
+				icmp_ih->ver = 4;
+				icmp_ih->ihl = 5;
+				icmp_ih->id = htons(4);
+				icmp_ih->ttl = 64;
+				uint16_t tot_len = 2 * sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + 8;
+				icmp_ih->tot_len = htons(tot_len);
+				icmp_ih->checksum = 0;
+				uint16_t checksum_ip = checksum((uint16_t*)icmp_ih, sizeof(struct ip_hdr));
+				icmp_ih->checksum = htons(checksum_ip);
+
+				struct icmp_hdr *icmp_icmph = (struct icmp_hdr*)(dest_unrc_icmp + sizeof(struct ether_hdr) + sizeof(struct ip_hdr));
+				icmp_icmph->mtype = 11;
+				icmp_icmph->mcode = 0;
+				icmp_icmph->check = 0;
+				uint16_t checksum_icmp = checksum((uint16_t*)icmp_icmph, sizeof(struct icmp_hdr));
+				icmp_icmph->check = htons(checksum_icmp);
+
+				memcpy(dest_unrc_icmp + sizeof(struct ether_hdr) + sizeof(struct ip_hdr) + sizeof(struct icmp_hdr), ih, sizeof(struct ip_hdr) + 8);
+
+				send_to_link(dest_unrc_icmp_len, dest_unrc_icmp, interface);
+				free(dest_unrc_icmp);
 				continue;
 			}
 
@@ -101,6 +183,44 @@ int main(int argc, char *argv[])
 
 			if (rt_entry == NULL) {
 				// send icmp packet "Destination unreachable"
+				size_t dest_unrc_icmp_len = sizeof(struct ether_hdr) + 2 * sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + 8;
+				char *dest_unrc_icmp = malloc(dest_unrc_icmp_len);
+
+				struct ether_hdr *icmp_eh = (struct ether_hdr*)dest_unrc_icmp;
+				for (int i = 0; i < 6; ++i) {
+					icmp_eh->ethr_dhost[i] = eh->ethr_shost[i];
+					icmp_eh->ethr_shost[i] = eh->ethr_dhost[i];
+				}
+				icmp_eh->ethr_type = htons(ETHERTYPE_IP);
+
+				struct ip_hdr *icmp_ih = (struct ip_hdr*)(dest_unrc_icmp + sizeof(struct ether_hdr));
+				icmp_ih->dest_addr = ih->source_addr;
+				icmp_ih->source_addr = int_ip;
+				icmp_ih->proto = IP_PROTO_ICMP;
+				icmp_ih->tos = 0;
+				icmp_ih->frag = 0;
+				icmp_ih->ver = 4;
+				icmp_ih->ihl = 5;
+				icmp_ih->id = htons(4);
+				icmp_ih->ttl = 64;
+				uint16_t tot_len = 2 * sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + 8;
+				icmp_ih->tot_len = htons(tot_len);
+				icmp_ih->checksum = 0;
+				uint16_t checksum_ip = checksum((uint16_t*)icmp_ih, sizeof(struct ip_hdr));
+				icmp_ih->checksum = htons(checksum_ip);
+
+				struct icmp_hdr *icmp_icmph = (struct icmp_hdr*)(dest_unrc_icmp + sizeof(struct ether_hdr) + sizeof(struct ip_hdr));
+				icmp_icmph->mtype = 3;
+				icmp_icmph->mcode = 0;
+				icmp_icmph->check = 0;
+				uint16_t checksum_icmp = checksum((uint16_t*)icmp_icmph, sizeof(struct icmp_hdr));
+				icmp_icmph->check = htons(checksum_icmp);
+
+				memcpy(dest_unrc_icmp + sizeof(struct ether_hdr) + sizeof(struct ip_hdr) + sizeof(struct icmp_hdr), ih, sizeof(struct ip_hdr) + 8);
+
+				send_to_link(dest_unrc_icmp_len, dest_unrc_icmp, interface);
+				free(dest_unrc_icmp);
+
 				continue;
 			}
 			
