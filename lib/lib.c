@@ -1,3 +1,4 @@
+#include "protocols.h"
 #include "lib.h"
 
 #include <sys/ioctl.h>
@@ -283,4 +284,60 @@ int parse_arp_table(char *path, struct arp_table_entry *arp_table)
 	fclose(f);
 	fprintf(stderr, "Done parsing ARP table.\n");
 	return i;
+}
+
+void make_ether_hdr(struct ether_hdr *hdr, uint8_t d_mac[6], uint8_t s_mac[6], uint16_t type)
+{
+	for (int i = 0; i < 6; ++i) {
+		hdr->ethr_dhost[i] = d_mac[i];
+		hdr->ethr_shost[i] = s_mac[i];
+	}
+	hdr->ethr_type = type;
+}
+
+void make_ip_hdr(struct ip_hdr *hdr, uint32_t dest_addr, uint32_t src_addr, uint8_t proto, uint16_t tot_len)
+{
+	hdr->dest_addr = dest_addr;
+	hdr->source_addr = src_addr;
+	hdr->proto = proto;
+	hdr->tos = 0;
+	hdr->frag = 0;
+	hdr->ver = 4;
+	hdr->ihl = 5;
+	hdr->id = htons(4);
+	hdr->ttl = 64;
+	hdr->tot_len = tot_len;
+	hdr->checksum = 0;
+	uint16_t checksum_ip = checksum((uint16_t*)hdr, sizeof(struct ip_hdr));
+	hdr->checksum = htons(checksum_ip);
+}
+
+void make_arp_hdr(struct arp_hdr* hdr, uint16_t opcode, uint32_t tprotoa, uint32_t sprotoa, uint8_t thwa[6], uint8_t shwa[6])
+{
+	hdr->hw_len = 6;
+	hdr->proto_len = 4;
+	hdr->opcode = opcode;
+	hdr->tprotoa = tprotoa; // its in network byte order
+	hdr->sprotoa = sprotoa;
+
+	for (int i = 0; i < 6; ++i) {
+		hdr->shwa[i] = shwa[i];
+		hdr->thwa[i] = thwa[i];
+	}
+}
+
+int l2_valid(uint8_t d_mac[6], uint8_t int_mac[6])
+{
+	int broadcast = 1;
+	int is_router_dest = 1;
+	for (int i = 0; i < 6; ++i) {
+		if (d_mac[i] != 0xFF) {
+			broadcast = 0;
+		}
+		if (d_mac[i] != int_mac[i]) {
+			is_router_dest = 0;
+		}
+	}
+
+	return broadcast || is_router_dest;
 }

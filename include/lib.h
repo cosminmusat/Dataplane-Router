@@ -114,3 +114,12 @@ void init(char *argv[], int argc);
 	} while (0)
 
 #endif /* _SKEL_H_ */
+
+void make_ether_hdr(struct ether_hdr *hdr, uint8_t d_mac[6], uint8_t s_mac[6], uint16_t type);
+
+int l2_valid(uint8_t d_mac[6], uint8_t int_mac[6]);
+
+void make_ip_hdr(struct ip_hdr *hdr, uint32_t dest_addr, uint32_t src_addr, uint8_t proto, uint16_t tot_len);
+
+void make_arp_hdr(struct arp_hdr* hdr, uint16_t opcode, uint32_t tprotoa, uint32_t sprotoa, uint8_t thwa[6], uint8_t shwa[6]);
+
